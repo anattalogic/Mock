@@ -1,0 +1,6 @@
+{
+  "name": "User Guide & Mockup Creator",
+  "description": "An interactive mockup builder and user guide creation tool with canvas controls, rulers, smart-snapping, vector/raster exports, templates, and full presentation playbacks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
