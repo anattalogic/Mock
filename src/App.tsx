@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Project, Page, CanvasElement, ToolType, Point } from './types';
 import { loadTemplate } from './templates';
+import {
+  groupElements,
+  ungroupElements,
+  toggleGroupLock,
+  toggleGroupHide,
+  renameGroup,
+  setGroupOpacity,
+} from './utils/groupUtils';
 import Header from './components/Header';
 import Toolbar from './components/Toolbar';
 import SidebarLeft from './components/SidebarLeft';
@@ -313,6 +321,171 @@ export default function App() {
     setSelectedElementIds((prev) => prev.filter((item) => item !== id));
   };
 
+  // Group operations
+  const handleGroupElements = () => {
+    const activePage = project.pages.find((p) => p.id === activePageId);
+    if (!activePage || selectedElementIds.length <= 1) return;
+
+    const updatedElements = groupElements(activePage.elements, selectedElementIds);
+    const updatedPages = project.pages.map((p) => {
+      if (p.id === activePageId) {
+        return { ...p, elements: updatedElements };
+      }
+      return p;
+    });
+
+    pushState({
+      ...project,
+      pages: updatedPages,
+      updatedAt: new Date().toISOString(),
+    });
+    triggerToast(`Grouped ${selectedElementIds.length} elements`);
+  };
+
+  const handleUngroupElements = () => {
+    const activePage = project.pages.find((p) => p.id === activePageId);
+    if (!activePage || selectedElementIds.length === 0) return;
+
+    const updatedElements = ungroupElements(activePage.elements, selectedElementIds);
+    const updatedPages = project.pages.map((p) => {
+      if (p.id === activePageId) {
+        return { ...p, elements: updatedElements };
+      }
+      return p;
+    });
+
+    pushState({
+      ...project,
+      pages: updatedPages,
+      updatedAt: new Date().toISOString(),
+    });
+    triggerToast('Ungrouped elements');
+  };
+
+  const handleToggleGroupLock = (groupId: string) => {
+    const activePage = project.pages.find((p) => p.id === activePageId);
+    if (!activePage) return;
+
+    const updatedElements = toggleGroupLock(activePage.elements, groupId);
+    const updatedPages = project.pages.map((p) => {
+      if (p.id === activePageId) {
+        return { ...p, elements: updatedElements };
+      }
+      return p;
+    });
+
+    pushState({
+      ...project,
+      pages: updatedPages,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const handleToggleGroupHide = (groupId: string) => {
+    const activePage = project.pages.find((p) => p.id === activePageId);
+    if (!activePage) return;
+
+    const updatedElements = toggleGroupHide(activePage.elements, groupId);
+    const updatedPages = project.pages.map((p) => {
+      if (p.id === activePageId) {
+        return { ...p, elements: updatedElements };
+      }
+      return p;
+    });
+
+    pushState({
+      ...project,
+      pages: updatedPages,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const handleRenameGroup = (groupId: string, name: string) => {
+    const activePage = project.pages.find((p) => p.id === activePageId);
+    if (!activePage) return;
+
+    const updatedElements = renameGroup(activePage.elements, groupId, name);
+    const updatedPages = project.pages.map((p) => {
+      if (p.id === activePageId) {
+        return { ...p, elements: updatedElements };
+      }
+      return p;
+    });
+
+    setProject({
+      ...project,
+      pages: updatedPages,
+      updatedAt: new Date().toISOString(),
+    });
+    setUnsavedChanges(true);
+  };
+
+  const handleSetGroupOpacity = (groupId: string, opacity: number) => {
+    const activePage = project.pages.find((p) => p.id === activePageId);
+    if (!activePage) return;
+
+    const updatedElements = setGroupOpacity(activePage.elements, groupId, opacity);
+    const updatedPages = project.pages.map((p) => {
+      if (p.id === activePageId) {
+        return { ...p, elements: updatedElements };
+      }
+      return p;
+    });
+
+    setProject({
+      ...project,
+      pages: updatedPages,
+      updatedAt: new Date().toISOString(),
+    });
+    setUnsavedChanges(true);
+  };
+
+  const handleSelectGroup = (groupId: string, shiftKey: boolean) => {
+    const activePage = project.pages.find((p) => p.id === activePageId);
+    if (!activePage) return;
+
+    const groupElementIds = activePage.elements
+      .filter((el) => el.groupId === groupId)
+      .map((el) => el.id);
+
+    if (shiftKey) {
+      const allSelected = groupElementIds.every((id) => selectedElementIds.includes(id));
+      if (allSelected) {
+        setSelectedElementIds(selectedElementIds.filter((id) => !groupElementIds.includes(id)));
+      } else {
+        setSelectedElementIds(Array.from(new Set([...selectedElementIds, ...groupElementIds])));
+      }
+    } else {
+      setSelectedElementIds(groupElementIds);
+    }
+  };
+
+  const handleDeleteGroup = (groupId: string) => {
+    const activePage = project.pages.find((p) => p.id === activePageId);
+    if (!activePage) return;
+
+    const updatedElements = activePage.elements.filter((el) => el.groupId !== groupId);
+    const updatedPages = project.pages.map((p) => {
+      if (p.id === activePageId) {
+        return { ...p, elements: updatedElements };
+      }
+      return p;
+    });
+
+    pushState({
+      ...project,
+      pages: updatedPages,
+      updatedAt: new Date().toISOString(),
+    });
+    setSelectedElementIds((prev) =>
+      prev.filter((id) => {
+        const el = activePage.elements.find((e) => e.id === id);
+        return el?.groupId !== groupId;
+      })
+    );
+    triggerToast('Deleted group');
+  };
+
   // Keyboard shortcut listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -360,19 +533,29 @@ export default function App() {
         }
       }
 
-      // 3. Save: Ctrl+S
+      // 3. Group: Ctrl+G / Ungroup: Ctrl+Shift+G
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'g' || e.key === 'G')) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleUngroupElements();
+        } else {
+          handleGroupElements();
+        }
+      }
+
+      // 4. Save: Ctrl+S
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         e.preventDefault();
         handleSaveProject();
       }
 
-      // 4. Undo: Ctrl+Z
+      // 5. Undo: Ctrl+Z
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
         handleUndo();
       }
 
-      // 5. Redo: Ctrl+Shift+Z or Ctrl+Y
+      // 6. Redo: Ctrl+Shift+Z or Ctrl+Y
       if (((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) || ((e.ctrlKey || e.metaKey) && e.key === 'y')) {
         e.preventDefault();
         handleRedo();
@@ -848,6 +1031,13 @@ export default function App() {
           onToggleHide={handleToggleHide}
           onDeleteElement={handleDeleteElement}
           onReorderElements={handleReorderElements}
+          onGroupElements={handleGroupElements}
+          onUngroupElements={handleUngroupElements}
+          onToggleGroupLock={handleToggleGroupLock}
+          onToggleGroupHide={handleToggleGroupHide}
+          onRenameGroup={handleRenameGroup}
+          onSelectGroup={handleSelectGroup}
+          onDeleteGroup={handleDeleteGroup}
           onUploadImage={handleUploadImage}
           onAddElement={handleAddElement}
         />
@@ -862,6 +1052,10 @@ export default function App() {
           onUpdateElement={handleUpdateElement}
           onAddElement={handleAddElement}
           onDeleteElement={handleDeleteElement}
+          onGroupElements={handleGroupElements}
+          onUngroupElements={handleUngroupElements}
+          onToggleLock={handleToggleLock}
+          onToggleHide={handleToggleHide}
           setCursorPos={setCursorPos}
           setZoomPercent={setZoomPercent}
           zoomPercent={zoomPercent}
@@ -875,6 +1069,12 @@ export default function App() {
           onUpdateElement={handleUpdateElement}
           onUpdatePage={handleUpdatePage}
           onAlignElements={handleAlignElements}
+          onGroupElements={handleGroupElements}
+          onUngroupElements={handleUngroupElements}
+          onToggleGroupLock={handleToggleGroupLock}
+          onToggleGroupHide={handleToggleGroupHide}
+          onRenameGroup={handleRenameGroup}
+          onSetGroupOpacity={handleSetGroupOpacity}
           onExportPNG={handleExportPNG}
           onExportSVG={handleExportSVG}
         />

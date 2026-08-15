@@ -39,6 +39,7 @@ export interface BaseElement {
   hidden: boolean;
   zIndex: number;
   groupId?: string;
+  groupName?: string;
   linkToPageId?: string; // Interactive hotspot link in presentation mode
 }
 

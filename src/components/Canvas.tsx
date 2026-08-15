@@ -1,5 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Page, CanvasElement, ToolType, Point, DeviceType } from '../types';
+import { BoundingBox, getBoundingBox, scaleElementsProportionally } from '../utils/groupUtils';
+import { Boxes, Ungroup, Group as GroupIcon, Lock, Unlock, Eye, EyeOff } from 'lucide-react';
 
 interface CanvasProps {
   page: Page;
@@ -10,6 +12,10 @@ interface CanvasProps {
   onUpdateElement: (id: string, updates: Partial<CanvasElement>) => void;
   onAddElement: (element: CanvasElement) => void;
   onDeleteElement: (id: string) => void;
+  onGroupElements?: () => void;
+  onUngroupElements?: () => void;
+  onToggleLock?: (id: string) => void;
+  onToggleHide?: (id: string) => void;
   
   // Status reporting
   setCursorPos: (pos: Point) => void;
@@ -18,12 +24,14 @@ interface CanvasProps {
 }
 
 interface DragState {
-  type: 'none' | 'drag-element' | 'resize' | 'pan' | 'draw' | 'lasso' | 'connector-draw';
+  type: 'none' | 'drag-element' | 'resize' | 'group-resize' | 'pan' | 'draw' | 'lasso' | 'connector-draw';
   startX: number;
   startY: number;
   startPanX: number;
   startPanY: number;
   elementStarts: { [id: string]: { x: number; y: number; width: number; height: number } };
+  groupStartBBox?: BoundingBox;
+  initialElements?: CanvasElement[];
   resizeHandle?: 'tl' | 'tr' | 'bl' | 'br' | 'n' | 's' | 'e' | 'w';
   connectorStartId?: string;
 }
@@ -37,6 +45,10 @@ export default function Canvas({
   onUpdateElement,
   onAddElement,
   onDeleteElement,
+  onGroupElements,
+  onUngroupElements,
+  onToggleLock,
+  onToggleHide,
   setCursorPos,
   setZoomPercent,
   zoomPercent,
@@ -404,6 +416,46 @@ export default function Canvas({
       return;
     }
 
+    if (state.type === 'group-resize' && state.groupStartBBox && state.initialElements && state.resizeHandle) {
+      const origBBox = state.groupStartBBox;
+      let newX = origBBox.x;
+      let newY = origBBox.y;
+      let newW = origBBox.width;
+      let newH = origBBox.height;
+
+      const h = state.resizeHandle;
+
+      if (h.includes('e')) newW = Math.max(10, origBBox.width + dx);
+      if (h.includes('w')) {
+        newW = Math.max(10, origBBox.width - dx);
+        newX = origBBox.x + (origBBox.width - newW);
+      }
+      if (h.includes('s')) newH = Math.max(10, origBBox.height + dy);
+      if (h.includes('n')) {
+        newH = Math.max(10, origBBox.height - dy);
+        newY = origBBox.y + (origBBox.height - newH);
+      }
+
+      const scaled = scaleElementsProportionally(state.initialElements, origBBox, {
+        x: newX,
+        y: newY,
+        width: newW,
+        height: newH,
+      });
+
+      scaled.forEach((item) => {
+        onUpdateElement(item.id, {
+          x: item.x,
+          y: item.y,
+          width: item.width,
+          height: item.height,
+          ...(item.type === 'text' ? { fontSize: (item as any).fontSize } : {}),
+          ...(item.type === 'drawing' ? { points: (item as any).points } : {}),
+        });
+      });
+      return;
+    }
+
     if (state.type === 'resize' && state.resizeHandle) {
       // Resizing logic per handle
       selectedElementIds.forEach((id) => {
@@ -511,18 +563,34 @@ export default function Canvas({
 
     if (el.locked || activeTool !== 'select') return;
 
-    if (!selectedElementIds.includes(el.id)) {
-      if (e.shiftKey) {
-        setSelectedElementIds([...selectedElementIds, el.id]);
+    // Check if element belongs to a group entity
+    let targetIdsToSelect: string[] = [el.id];
+    if (el.groupId) {
+      const groupMembers = page.elements.filter((item) => item.groupId === el.groupId);
+      targetIdsToSelect = groupMembers.map((item) => item.id);
+    }
+
+    let nextSelectedIds: string[];
+    if (e.shiftKey) {
+      const allSelected = targetIdsToSelect.every((id) => selectedElementIds.includes(id));
+      if (allSelected) {
+        nextSelectedIds = selectedElementIds.filter((id) => !targetIdsToSelect.includes(id));
       } else {
-        setSelectedElementIds([el.id]);
+        nextSelectedIds = Array.from(new Set([...selectedElementIds, ...targetIdsToSelect]));
+      }
+    } else {
+      const alreadySelected = targetIdsToSelect.some((id) => selectedElementIds.includes(id));
+      if (alreadySelected && selectedElementIds.length > 1) {
+        nextSelectedIds = selectedElementIds;
+      } else {
+        nextSelectedIds = targetIdsToSelect;
       }
     }
 
-    const starts: { [id: string]: { x: number; y: number; width: number; height: number } } = {};
-    const targets = e.shiftKey ? [...selectedElementIds, el.id] : [el.id];
+    setSelectedElementIds(nextSelectedIds);
 
-    targets.forEach((id) => {
+    const starts: { [id: string]: { x: number; y: number; width: number; height: number } } = {};
+    nextSelectedIds.forEach((id) => {
       const match = page.elements.find((item) => item.id === id);
       if (match) {
         starts[id] = { x: match.x, y: match.y, width: match.width, height: match.height };
@@ -539,7 +607,7 @@ export default function Canvas({
     };
   };
 
-  // Start resizing an element from a specific handle
+  // Start resizing a single element from a specific handle
   const handleResizeMouseDown = (e: React.MouseEvent, el: CanvasElement, handle: any) => {
     e.stopPropagation();
     e.preventDefault();
@@ -554,6 +622,29 @@ export default function Canvas({
       startPanX: pan.x,
       startPanY: pan.y,
       elementStarts: starts,
+      resizeHandle: handle,
+    };
+  };
+
+  // Start resizing the entire multi-selection / group bounding box proportionally
+  const handleGroupResizeMouseDown = (e: React.MouseEvent, handle: any) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    const selectedEls = page.elements.filter((el) => selectedElementIds.includes(el.id));
+    if (selectedEls.length === 0) return;
+
+    const bbox = getBoundingBox(selectedEls);
+
+    dragRef.current = {
+      type: 'group-resize',
+      startX: e.clientX,
+      startY: e.clientY,
+      startPanX: pan.x,
+      startPanY: pan.y,
+      elementStarts: {},
+      groupStartBBox: bbox,
+      initialElements: JSON.parse(JSON.stringify(selectedEls)),
       resizeHandle: handle,
     };
   };
@@ -1241,8 +1332,8 @@ export default function Canvas({
                     />
                   )}
 
-                  {/* RESIZE INTERACTIVE HANDLES ON SELECTED ELEMENT */}
-                  {isSelected && !el.locked && (
+                  {/* RESIZE INTERACTIVE HANDLES ON SELECTED ELEMENT (Only when single element selected) */}
+                  {isSelected && !el.locked && selectedElementIds.length === 1 && (
                     <>
                       {/* Corner anchor node buttons */}
                       <div
@@ -1283,6 +1374,106 @@ export default function Canvas({
                 </div>
               );
             })}
+
+          {/* MULTI-SELECTION & GROUP BOUNDING BOX OVERLAY */}
+          {selectedElementIds.length > 1 && (() => {
+            const selectedEls = page.elements.filter((el) => selectedElementIds.includes(el.id));
+            if (selectedEls.length === 0) return null;
+            const bbox = getBoundingBox(selectedEls);
+            const isAllSameGroup = selectedEls.every((el) => el.groupId && el.groupId === selectedEls[0].groupId);
+            const groupName = isAllSameGroup ? selectedEls[0].groupName || 'Group Entity' : null;
+            const isGroupLocked = selectedEls.every((el) => el.locked);
+
+            return (
+              <div
+                className="absolute pointer-events-none border-2 border-blue-500/90 rounded-xs z-30 transition-all"
+                style={{
+                  left: `${bbox.x}px`,
+                  top: `${bbox.y}px`,
+                  width: `${bbox.width}px`,
+                  height: `${bbox.height}px`,
+                }}
+              >
+                {/* Floating Group Quick Control Tag */}
+                <div className="absolute -top-8 left-0 flex items-center gap-1.5 bg-zinc-900/95 dark:bg-zinc-800 text-white text-[11px] font-medium px-2.5 py-1 rounded shadow-md pointer-events-auto select-none border border-zinc-700/50 backdrop-blur-xs">
+                  <Boxes size={13} className="text-blue-400 shrink-0" />
+                  <span className="truncate max-w-[130px] font-semibold text-zinc-100">
+                    {groupName ? groupName : `${selectedEls.length} elements`}
+                  </span>
+                  
+                  <div className="w-px h-3 bg-zinc-700 mx-0.5" />
+                  
+                  {isAllSameGroup ? (
+                    onUngroupElements && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUngroupElements();
+                        }}
+                        className="flex items-center gap-1 px-1.5 py-0.5 hover:bg-zinc-800 text-zinc-300 hover:text-white rounded text-[10px] cursor-pointer transition-colors"
+                        title="Ungroup Elements (Ctrl+Shift+G)"
+                      >
+                        <Ungroup size={11} />
+                        <span>Ungroup</span>
+                      </button>
+                    )
+                  ) : (
+                    onGroupElements && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onGroupElements();
+                        }}
+                        className="flex items-center gap-1 px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-[10px] cursor-pointer font-semibold transition-colors shadow-xs"
+                        title="Group into Entity (Ctrl+G)"
+                      >
+                        <GroupIcon size={11} />
+                        <span>Group</span>
+                      </button>
+                    )
+                  )}
+                </div>
+
+                {/* Unified Proportional Resize Handles */}
+                {!isGroupLocked && (
+                  <>
+                    <div
+                      onMouseDown={(e) => handleGroupResizeMouseDown(e, 'tl')}
+                      className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-blue-600 rounded-xs cursor-nwse-resize pointer-events-auto shadow-xs z-40"
+                    />
+                    <div
+                      onMouseDown={(e) => handleGroupResizeMouseDown(e, 'tr')}
+                      className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-blue-600 rounded-xs cursor-nesw-resize pointer-events-auto shadow-xs z-40"
+                    />
+                    <div
+                      onMouseDown={(e) => handleGroupResizeMouseDown(e, 'bl')}
+                      className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-blue-600 rounded-xs cursor-nesw-resize pointer-events-auto shadow-xs z-40"
+                    />
+                    <div
+                      onMouseDown={(e) => handleGroupResizeMouseDown(e, 'br')}
+                      className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-blue-600 rounded-xs cursor-nwse-resize pointer-events-auto shadow-xs z-40"
+                    />
+                    <div
+                      onMouseDown={(e) => handleGroupResizeMouseDown(e, 'n')}
+                      className="absolute -top-1 left-1/2 -translate-x-1/2 w-4 h-1.5 bg-white border-2 border-blue-600 rounded-xs cursor-ns-resize pointer-events-auto shadow-xs z-40"
+                    />
+                    <div
+                      onMouseDown={(e) => handleGroupResizeMouseDown(e, 's')}
+                      className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-4 h-1.5 bg-white border-2 border-blue-600 rounded-xs cursor-ns-resize pointer-events-auto shadow-xs z-40"
+                    />
+                    <div
+                      onMouseDown={(e) => handleGroupResizeMouseDown(e, 'e')}
+                      className="absolute top-1/2 -translate-y-1/2 -right-1 w-1.5 h-4 bg-white border-2 border-blue-600 rounded-xs cursor-ew-resize pointer-events-auto shadow-xs z-40"
+                    />
+                    <div
+                      onMouseDown={(e) => handleGroupResizeMouseDown(e, 'w')}
+                      className="absolute top-1/2 -translate-y-1/2 -left-1 w-1.5 h-4 bg-white border-2 border-blue-600 rounded-xs cursor-ew-resize pointer-events-auto shadow-xs z-40"
+                    />
+                  </>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Render ongoing Lasso Selection box */}
           {lassoBox && lassoBox.w !== 0 && lassoBox.h !== 0 && (

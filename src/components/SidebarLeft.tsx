@@ -31,8 +31,15 @@ import {
   ListOrdered,
   Radio,
   Command,
+  Boxes,
+  Ungroup,
+  Group as GroupIcon,
+  ChevronRight,
+  ChevronDown,
+  Edit3,
 } from 'lucide-react';
 import { Page, CanvasElement, Project, DeviceType, UIComponentVariant } from '../types';
+import { getGroupsInPage } from '../utils/groupUtils';
 
 interface SidebarLeftProps {
   project: Project;
@@ -53,6 +60,15 @@ interface SidebarLeftProps {
   onToggleHide: (id: string) => void;
   onDeleteElement: (id: string) => void;
   onReorderElements: (id: string, direction: 'up' | 'down' | 'front' | 'back') => void;
+
+  // Group Operations
+  onGroupElements?: () => void;
+  onUngroupElements?: () => void;
+  onToggleGroupLock?: (groupId: string) => void;
+  onToggleGroupHide?: (groupId: string) => void;
+  onRenameGroup?: (groupId: string, name: string) => void;
+  onSelectGroup?: (groupId: string, shiftKey: boolean) => void;
+  onDeleteGroup?: (groupId: string) => void;
 
   // Add Component / Frame Helper
   onAddElement: (element: CanvasElement) => void;
@@ -78,12 +94,22 @@ export default function SidebarLeft({
   onToggleHide,
   onDeleteElement,
   onReorderElements,
+  onGroupElements,
+  onUngroupElements,
+  onToggleGroupLock,
+  onToggleGroupHide,
+  onRenameGroup,
+  onSelectGroup,
+  onDeleteGroup,
   onAddElement,
   onUploadImage,
 }: SidebarLeftProps) {
   const [activeTab, setActiveTab] = useState<'pages' | 'layers' | 'uikit' | 'assets'>('pages');
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
   const [editingPageName, setEditingPageName] = useState('');
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<string[]>([]);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editingGroupName, setEditingGroupName] = useState<string>('');
 
   const startEditingPage = (page: Page) => {
     setEditingPageId(page.id);
@@ -638,110 +664,382 @@ export default function SidebarLeft({
         )}
 
         {/* LAYERS TAB */}
-        {activeTab === 'layers' && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-zinc-400 dark:text-zinc-600 uppercase tracking-wider">
-                Layers & Stack
-              </span>
-              <span className="text-[10px] text-zinc-400 bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-500 px-1.5 py-0.5 rounded font-mono">
-                {elements.length} items
-              </span>
-            </div>
+        {activeTab === 'layers' && (() => {
+          const groups = getGroupsInPage(elements);
+          const groupedElementIds = new Set<string>();
+          groups.forEach((g) => g.elementIds.forEach((id) => groupedElementIds.add(id)));
 
-            {elements.length === 0 ? (
-              <div className="text-center py-8 text-xs text-zinc-400 dark:text-zinc-500 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-md">
-                No elements on canvas. Pick a component from the UI Kit tab!
+          const hasSelectedGroup = selectedElementIds.some((id) => {
+            const el = elements.find((e) => e.id === id);
+            return el && el.groupId;
+          });
+          const canGroup = selectedElementIds.length > 1;
+
+          const toggleGroupCollapse = (groupId: string) => {
+            setCollapsedGroupIds((prev) =>
+              prev.includes(groupId) ? prev.filter((id) => id !== groupId) : [...prev, groupId]
+            );
+          };
+
+          const handleSaveGroupName = (groupId: string) => {
+            if (onRenameGroup && editingGroupName.trim()) {
+              onRenameGroup(groupId, editingGroupName.trim());
+            }
+            setEditingGroupId(null);
+            setEditingGroupName('');
+          };
+
+          return (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-zinc-400 dark:text-zinc-600 uppercase tracking-wider">
+                  Layers & Groups
+                </span>
+                <span className="text-[10px] text-zinc-400 bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-500 px-1.5 py-0.5 rounded font-mono">
+                  {elements.length} items {groups.length > 0 && `• ${groups.length} groups`}
+                </span>
               </div>
-            ) : (
-              <div className="space-y-1">
-                {[...elements]
-                  .sort((a, b) => b.zIndex - a.zIndex)
-                  .map((el) => {
-                    const isSelected = selectedElementIds.includes(el.id);
+
+              {/* Quick Group / Ungroup Action Bar */}
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-zinc-100 dark:bg-zinc-850 rounded-lg border border-zinc-200 dark:border-zinc-800">
+                <button
+                  onClick={() => onGroupElements && onGroupElements()}
+                  disabled={!canGroup}
+                  className={`flex items-center justify-center gap-1.5 py-1 px-2 rounded text-xs font-medium transition-all ${
+                    canGroup
+                      ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-xs cursor-pointer'
+                      : 'text-zinc-400 dark:text-zinc-600 opacity-50 cursor-not-allowed'
+                  }`}
+                  title="Group selected elements (Ctrl+G)"
+                >
+                  <GroupIcon size={13} />
+                  <span>Group</span>
+                </button>
+                <button
+                  onClick={() => onUngroupElements && onUngroupElements()}
+                  disabled={!hasSelectedGroup}
+                  className={`flex items-center justify-center gap-1.5 py-1 px-2 rounded text-xs font-medium transition-all ${
+                    hasSelectedGroup
+                      ? 'bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 border border-zinc-200 dark:border-zinc-700 shadow-xs cursor-pointer'
+                      : 'text-zinc-400 dark:text-zinc-600 opacity-50 cursor-not-allowed'
+                  }`}
+                  title="Ungroup selected group (Ctrl+Shift+G)"
+                >
+                  <Ungroup size={13} />
+                  <span>Ungroup</span>
+                </button>
+              </div>
+
+              {elements.length === 0 ? (
+                <div className="text-center py-8 text-xs text-zinc-400 dark:text-zinc-500 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-md">
+                  No elements on canvas. Pick a component from the UI Kit tab!
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {/* Render Groups First (as collapsible folders) */}
+                  {groups.map((group) => {
+                    const isCollapsed = collapsedGroupIds.includes(group.id);
+                    const groupElements = elements
+                      .filter((el) => el.groupId === group.id)
+                      .sort((a, b) => b.zIndex - a.zIndex);
+                    const isGroupSelected =
+                      groupElements.length > 0 &&
+                      groupElements.every((el) => selectedElementIds.includes(el.id));
+
                     return (
                       <div
-                        key={el.id}
-                        onClick={(e) => onSelectElement(el.id, e.shiftKey)}
-                        className={`group flex items-center justify-between p-2 rounded-md cursor-pointer transition-all border ${
-                          isSelected
-                            ? 'bg-blue-50/50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/40 text-blue-900 dark:text-blue-100'
-                            : 'border-transparent text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
+                        key={`group-card-${group.id}`}
+                        className={`rounded-md border transition-all ${
+                          isGroupSelected
+                            ? 'bg-blue-50/40 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800/60'
+                            : 'bg-zinc-50/50 dark:bg-zinc-900/40 border-zinc-200 dark:border-zinc-800'
                         }`}
                       >
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <span className="text-[10px] text-zinc-400 font-mono w-4 shrink-0">
-                            {el.zIndex}
-                          </span>
-                          <span className="text-xs truncate font-medium">
-                            {el.name || el.type.toUpperCase()}
-                          </span>
-                        </div>
+                        {/* Group Header Row */}
+                        <div
+                          onClick={(e) => {
+                            if (onSelectGroup) {
+                              onSelectGroup(group.id, e.shiftKey);
+                            }
+                          }}
+                          className="group flex items-center justify-between p-1.5 cursor-pointer rounded-t-md hover:bg-zinc-100/70 dark:hover:bg-zinc-800/60"
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleGroupCollapse(group.id);
+                              }}
+                              className="p-0.5 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 rounded cursor-pointer"
+                            >
+                              {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+                            </button>
+                            <Boxes size={14} className="text-blue-500 shrink-0" />
 
-                        {/* Layer visibility & lock toggles */}
-                        <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onToggleLock(el.id);
-                            }}
-                            className="p-1 rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer"
-                            title={el.locked ? 'Unlock element' : 'Lock element'}
-                          >
-                            {el.locked ? <Lock size={12} className="text-amber-500" /> : <Unlock size={12} />}
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onToggleHide(el.id);
-                            }}
-                            className="p-1 rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer"
-                            title={el.hidden ? 'Show element' : 'Hide element'}
-                          >
-                            {el.hidden ? <EyeOff size={12} className="text-red-500" /> : <Eye size={12} />}
-                          </button>
-                          
-                          {/* Stacking controls */}
-                          <div className="hidden group-hover:flex items-center">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onReorderElements(el.id, 'up');
-                              }}
-                              className="p-0.5 rounded text-zinc-400 hover:text-blue-600 cursor-pointer"
-                              title="Bring Forward"
-                            >
-                              <ArrowUp size={11} />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onReorderElements(el.id, 'down');
-                              }}
-                              className="p-0.5 rounded text-zinc-400 hover:text-blue-600 cursor-pointer"
-                              title="Send Backward"
-                            >
-                              <ArrowDown size={11} />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDeleteElement(el.id);
-                              }}
-                              className="p-1 rounded text-zinc-400 hover:text-red-500 cursor-pointer"
-                              title="Delete Item"
-                            >
-                              <Trash2 size={11} />
-                            </button>
+                            {editingGroupId === group.id ? (
+                              <input
+                                autoFocus
+                                type="text"
+                                value={editingGroupName}
+                                onChange={(e) => setEditingGroupName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleSaveGroupName(group.id);
+                                  if (e.key === 'Escape') setEditingGroupId(null);
+                                }}
+                                onBlur={() => handleSaveGroupName(group.id)}
+                                onClick={(e) => e.stopPropagation()}
+                                className="h-5 px-1 text-xs border border-blue-500 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 w-full"
+                              />
+                            ) : (
+                              <span
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingGroupId(group.id);
+                                  setEditingGroupName(group.name);
+                                }}
+                                className="text-xs font-semibold truncate text-zinc-800 dark:text-zinc-200 flex-1"
+                                title="Double click to rename group"
+                              >
+                                {group.name}
+                              </span>
+                            )}
+
+                            <span className="text-[9px] font-mono text-zinc-400 bg-zinc-200/60 dark:bg-zinc-800 px-1.5 py-0.2 rounded-full shrink-0">
+                              {group.elementsCount}
+                            </span>
+                          </div>
+
+                          {/* Group-level action buttons */}
+                          <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 shrink-0">
+                            {onToggleGroupLock && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onToggleGroupLock(group.id);
+                                }}
+                                className="p-1 rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer"
+                                title={group.isLocked ? 'Unlock Group' : 'Lock Group'}
+                              >
+                                {group.isLocked ? (
+                                  <Lock size={12} className="text-amber-500" />
+                                ) : (
+                                  <Unlock size={12} />
+                                )}
+                              </button>
+                            )}
+
+                            {onToggleGroupHide && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onToggleGroupHide(group.id);
+                                }}
+                                className="p-1 rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer"
+                                title={group.isHidden ? 'Show Group' : 'Hide Group'}
+                              >
+                                {group.isHidden ? (
+                                  <EyeOff size={12} className="text-red-500" />
+                                ) : (
+                                  <Eye size={12} />
+                                )}
+                              </button>
+                            )}
+
+                            {onUngroupElements && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (onSelectGroup) onSelectGroup(group.id, false);
+                                  setTimeout(() => onUngroupElements(), 50);
+                                }}
+                                className="p-1 rounded text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                                title="Ungroup"
+                              >
+                                <Ungroup size={12} />
+                              </button>
+                            )}
+
+                            {onDeleteGroup && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onDeleteGroup(group.id);
+                                }}
+                                className="p-1 rounded text-zinc-400 hover:text-red-500 cursor-pointer"
+                                title="Delete Group"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
                           </div>
                         </div>
+
+                        {/* Indented Group Items */}
+                        {!isCollapsed && (
+                          <div className="pl-5 pr-1.5 pb-1 space-y-0.5 border-t border-zinc-100 dark:border-zinc-800/80 pt-1">
+                            {groupElements.map((el) => {
+                              const isChildSelected = selectedElementIds.includes(el.id);
+                              return (
+                                <div
+                                  key={el.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSelectElement(el.id, e.shiftKey);
+                                  }}
+                                  className={`group/child flex items-center justify-between p-1.5 rounded cursor-pointer transition-all border ${
+                                    isChildSelected
+                                      ? 'bg-blue-100/50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-100 font-medium'
+                                      : 'border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                    <span className="text-[9px] text-zinc-400 font-mono w-3 shrink-0">
+                                      {el.zIndex}
+                                    </span>
+                                    <span className="text-xs truncate">
+                                      {el.name || el.type.toUpperCase()}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-0.5 opacity-50 group-hover/child:opacity-100">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onToggleLock(el.id);
+                                      }}
+                                      className="p-0.5 rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+                                      title={el.locked ? 'Unlock element' : 'Lock element'}
+                                    >
+                                      {el.locked ? (
+                                        <Lock size={11} className="text-amber-500" />
+                                      ) : (
+                                        <Unlock size={11} />
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onToggleHide(el.id);
+                                      }}
+                                      className="p-0.5 rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
+                                      title={el.hidden ? 'Show element' : 'Hide element'}
+                                    >
+                                      {el.hidden ? (
+                                        <EyeOff size={11} className="text-red-500" />
+                                      ) : (
+                                        <Eye size={11} />
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onDeleteElement(el.id);
+                                      }}
+                                      className="p-0.5 rounded text-zinc-400 hover:text-red-500"
+                                      title="Delete Item"
+                                    >
+                                      <Trash2 size={11} />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
-              </div>
-            )}
-          </div>
-        )}
+
+                  {/* Render Ungrouped Elements */}
+                  {elements
+                    .filter((el) => !groupedElementIds.has(el.id))
+                    .sort((a, b) => b.zIndex - a.zIndex)
+                    .map((el) => {
+                      const isSelected = selectedElementIds.includes(el.id);
+                      return (
+                        <div
+                          key={el.id}
+                          onClick={(e) => onSelectElement(el.id, e.shiftKey)}
+                          className={`group flex items-center justify-between p-2 rounded-md cursor-pointer transition-all border ${
+                            isSelected
+                              ? 'bg-blue-50/50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/40 text-blue-900 dark:text-blue-100'
+                              : 'border-transparent text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <span className="text-[10px] text-zinc-400 font-mono w-4 shrink-0">
+                              {el.zIndex}
+                            </span>
+                            <span className="text-xs truncate font-medium">
+                              {el.name || el.type.toUpperCase()}
+                            </span>
+                          </div>
+
+                          {/* Layer visibility & lock toggles */}
+                          <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onToggleLock(el.id);
+                              }}
+                              className="p-1 rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer"
+                              title={el.locked ? 'Unlock element' : 'Lock element'}
+                            >
+                              {el.locked ? <Lock size={12} className="text-amber-500" /> : <Unlock size={12} />}
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onToggleHide(el.id);
+                              }}
+                              className="p-1 rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer"
+                              title={el.hidden ? 'Show element' : 'Hide element'}
+                            >
+                              {el.hidden ? <EyeOff size={12} className="text-red-500" /> : <Eye size={12} />}
+                            </button>
+                            
+                            {/* Stacking controls */}
+                            <div className="hidden group-hover:flex items-center">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onReorderElements(el.id, 'up');
+                                }}
+                                className="p-0.5 rounded text-zinc-400 hover:text-blue-600 cursor-pointer"
+                                title="Bring Forward"
+                              >
+                                <ArrowUp size={11} />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onReorderElements(el.id, 'down');
+                                }}
+                                className="p-0.5 rounded text-zinc-400 hover:text-blue-600 cursor-pointer"
+                                title="Send Backward"
+                              >
+                                <ArrowDown size={11} />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onDeleteElement(el.id);
+                                }}
+                                className="p-1 rounded text-zinc-400 hover:text-red-500 cursor-pointer"
+                                title="Delete Item"
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* UI KIT & COMPONENTS TAB */}
         {activeTab === 'uikit' && (

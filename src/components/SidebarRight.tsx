@@ -28,8 +28,12 @@ import {
   FileDown,
   Printer,
   Copy,
+  Boxes,
+  Ungroup,
+  Group as GroupIcon,
 } from 'lucide-react';
 import { CanvasElement, Page, AlignmentType, Project } from '../types';
+import { getBoundingBox } from '../utils/groupUtils';
 
 interface SidebarRightProps {
   selectedElements: CanvasElement[];
@@ -38,6 +42,12 @@ interface SidebarRightProps {
   onUpdateElement: (id: string, updates: Partial<CanvasElement>) => void;
   onUpdatePage: (updates: Partial<Page>) => void;
   onAlignElements?: (type: AlignmentType) => void;
+  onGroupElements?: () => void;
+  onUngroupElements?: () => void;
+  onToggleGroupLock?: (groupId: string) => void;
+  onToggleGroupHide?: (groupId: string) => void;
+  onRenameGroup?: (groupId: string, name: string) => void;
+  onSetGroupOpacity?: (groupId: string, opacity: number) => void;
   onExportPNG: (scale: number, transparent: boolean) => void;
   onExportSVG: () => void;
 }
@@ -49,6 +59,12 @@ export default function SidebarRight({
   onUpdateElement,
   onUpdatePage,
   onAlignElements,
+  onGroupElements,
+  onUngroupElements,
+  onToggleGroupLock,
+  onToggleGroupHide,
+  onRenameGroup,
+  onSetGroupOpacity,
   onExportPNG,
   onExportSVG,
 }: SidebarRightProps) {
@@ -57,7 +73,20 @@ export default function SidebarRight({
   const [excludeBg, setExcludeBg] = useState<boolean>(false);
   const [copiedEmbed, setCopiedEmbed] = useState<boolean>(false);
 
-  // If multiple elements selected, inspect the first one
+  // Determine group status of selection
+  const isMultiSelection = selectedElements.length > 1;
+  const isSingleGroup =
+    isMultiSelection &&
+    selectedElements.every(
+      (el) => el.groupId && el.groupId === selectedElements[0].groupId
+    );
+  const activeGroupId = isSingleGroup ? selectedElements[0].groupId : null;
+  const activeGroupName = isSingleGroup ? selectedElements[0].groupName || 'Group Entity' : '';
+  const groupBBox = isMultiSelection ? getBoundingBox(selectedElements) : null;
+  const isGroupAllLocked = isMultiSelection && selectedElements.every((el) => el.locked);
+  const isGroupAllHidden = isMultiSelection && selectedElements.every((el) => el.hidden);
+
+  // If multiple elements selected, inspect the first one for generic styles
   const element = selectedElements[0];
 
   const handleLayoutChange = (field: string, value: any) => {
@@ -292,122 +321,276 @@ export default function SidebarRight({
             {/* LAYOUT TAB */}
             {activeTab === 'layout' && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-zinc-400 dark:text-zinc-600 uppercase tracking-wider">
-                    {element.name || element.type.toUpperCase()}
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => handleLayoutChange('locked', !element.locked)}
-                      className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 cursor-pointer"
-                      title={element.locked ? 'Unlock' : 'Lock'}
-                    >
-                      {element.locked ? <Lock size={13} className="text-amber-500" /> : <Unlock size={13} />}
-                    </button>
-                    <button
-                      onClick={() => handleLayoutChange('hidden', !element.hidden)}
-                      className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 cursor-pointer"
-                      title={element.hidden ? 'Unhide' : 'Hide'}
-                    >
-                      {element.hidden ? <EyeOff size={13} className="text-red-500" /> : <Eye size={13} />}
-                    </button>
-                  </div>
-                </div>
+                {/* CASE: GROUP OR MULTI-SELECTION */}
+                {isMultiSelection ? (
+                  <div className="space-y-4">
+                    {/* Header */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Boxes size={15} className="text-blue-500 shrink-0" />
+                        <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 uppercase tracking-wider truncate">
+                          {isSingleGroup ? activeGroupName : `Multiple Elements (${selectedElements.length})`}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {isSingleGroup && activeGroupId && onToggleGroupLock && (
+                          <button
+                            onClick={() => onToggleGroupLock(activeGroupId)}
+                            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 cursor-pointer"
+                            title={isGroupAllLocked ? 'Unlock Group' : 'Lock Group'}
+                          >
+                            {isGroupAllLocked ? <Lock size={13} className="text-amber-500" /> : <Unlock size={13} />}
+                          </button>
+                        )}
+                        {isSingleGroup && activeGroupId && onToggleGroupHide && (
+                          <button
+                            onClick={() => onToggleGroupHide(activeGroupId)}
+                            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 cursor-pointer"
+                            title={isGroupAllHidden ? 'Show Group' : 'Hide Group'}
+                          >
+                            {isGroupAllHidden ? <EyeOff size={13} className="text-red-500" /> : <Eye size={13} />}
+                          </button>
+                        )}
+                      </div>
+                    </div>
 
-                {/* Name tag */}
-                <div>
-                  <label className="text-xs font-medium text-zinc-500 block mb-1">Element Label</label>
-                  <input
-                    type="text"
-                    value={element.name || ''}
-                    onChange={(e) => handleLayoutChange('name', e.target.value)}
-                    className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none"
-                  />
-                </div>
+                    {/* Group Name Editing (if single group) */}
+                    {isSingleGroup && activeGroupId && (
+                      <div>
+                        <label className="text-xs font-medium text-zinc-500 block mb-1">Group Label</label>
+                        <input
+                          type="text"
+                          value={activeGroupName}
+                          onChange={(e) => onRenameGroup && onRenameGroup(activeGroupId, e.target.value)}
+                          className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    )}
 
-                {/* X & Y Coords */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs font-medium text-zinc-500 block mb-1">X Position</label>
-                    <input
-                      type="number"
-                      value={Math.round(element.x)}
-                      onChange={(e) => handleLayoutChange('x', Number(e.target.value))}
-                      className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-zinc-500 block mb-1">Y Position</label>
-                    <input
-                      type="number"
-                      value={Math.round(element.y)}
-                      onChange={(e) => handleLayoutChange('y', Number(e.target.value))}
-                      className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none"
-                    />
-                  </div>
-                </div>
+                    {/* Group Action Buttons */}
+                    <div className="p-2 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-medium text-blue-900 dark:text-blue-200">
+                          {isSingleGroup ? 'Merged Group Entity' : 'Multi-element Selection'}
+                        </span>
+                        <span className="text-[10px] text-blue-700 dark:text-blue-300 font-mono">
+                          {selectedElements.length} items
+                        </span>
+                      </div>
 
-                {/* Width & Height */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs font-medium text-zinc-500 block mb-1">Width (px)</label>
-                    <input
-                      type="number"
-                      value={Math.round(element.width)}
-                      onChange={(e) => handleLayoutChange('width', Math.max(10, Number(e.target.value)))}
-                      className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-zinc-500 block mb-1">Height (px)</label>
-                    <input
-                      type="number"
-                      value={Math.round(element.height)}
-                      onChange={(e) => handleLayoutChange('height', Math.max(10, Number(e.target.value)))}
-                      className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none"
-                    />
-                  </div>
-                </div>
+                      {isSingleGroup ? (
+                        <button
+                          onClick={() => onUngroupElements && onUngroupElements()}
+                          className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 rounded text-xs font-medium text-zinc-700 dark:text-zinc-200 shadow-xs transition-all cursor-pointer"
+                        >
+                          <Ungroup size={13} className="text-zinc-500" />
+                          <span>Ungroup Elements (Ctrl+Shift+G)</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => onGroupElements && onGroupElements()}
+                          className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-medium shadow-xs transition-all cursor-pointer"
+                        >
+                          <GroupIcon size={13} />
+                          <span>Merge into Group (Ctrl+G)</span>
+                        </button>
+                      )}
+                    </div>
 
-                {/* Opacity */}
-                <div>
-                  <div className="flex justify-between text-xs font-medium text-zinc-500 mb-1">
-                    <span>Opacity</span>
-                    <span>{Math.round(element.opacity * 100)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={element.opacity}
-                    onChange={(e) => handleLayoutChange('opacity', Number(e.target.value))}
-                    className="w-full accent-blue-600"
-                  />
-                </div>
+                    {/* Group Bounding Coordinates */}
+                    {groupBBox && (
+                      <>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-xs font-medium text-zinc-500 block mb-1">Bounds X</label>
+                            <input
+                              type="number"
+                              disabled
+                              value={Math.round(groupBBox.x)}
+                              className="w-full bg-zinc-100 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-500 outline-none cursor-not-allowed"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-zinc-500 block mb-1">Bounds Y</label>
+                            <input
+                              type="number"
+                              disabled
+                              value={Math.round(groupBBox.y)}
+                              className="w-full bg-zinc-100 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-500 outline-none cursor-not-allowed"
+                            />
+                          </div>
+                        </div>
 
-                {/* Interactive Hotspot Link to Page */}
-                <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800">
-                  <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5 mb-1.5">
-                    <Link size={13} className="text-blue-500" />
-                    Interactive Hotspot Link
-                  </label>
-                  <select
-                    value={element.linkToPageId || ''}
-                    onChange={(e) => handleLayoutChange('linkToPageId', e.target.value || undefined)}
-                    className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none cursor-pointer"
-                  >
-                    <option value="">None (Static element)</option>
-                    {project?.pages.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        Go to Page: {p.name}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[10px] text-zinc-400 mt-1">
-                    Clicking this element in Preview Mode will navigate instantly to the linked page.
-                  </p>
-                </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-xs font-medium text-zinc-500 block mb-1">Group Width (px)</label>
+                            <input
+                              type="number"
+                              disabled
+                              value={Math.round(groupBBox.width)}
+                              className="w-full bg-zinc-100 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-500 outline-none cursor-not-allowed"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-zinc-500 block mb-1">Group Height (px)</label>
+                            <input
+                              type="number"
+                              disabled
+                              value={Math.round(groupBBox.height)}
+                              className="w-full bg-zinc-100 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-500 outline-none cursor-not-allowed"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Shared Group Opacity */}
+                    <div>
+                      <div className="flex justify-between text-xs font-medium text-zinc-500 mb-1">
+                        <span>Shared Group Opacity</span>
+                        <span>{Math.round((element.opacity ?? 1) * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={element.opacity ?? 1}
+                        onChange={(e) => {
+                          const newOp = Number(e.target.value);
+                          if (isSingleGroup && activeGroupId && onSetGroupOpacity) {
+                            onSetGroupOpacity(activeGroupId, newOp);
+                          } else {
+                            selectedElements.forEach((el) => {
+                              onUpdateElement(el.id, { opacity: newOp });
+                            });
+                          }
+                        }}
+                        className="w-full accent-blue-600"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  /* SINGLE ELEMENT LAYOUT */
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-zinc-400 dark:text-zinc-600 uppercase tracking-wider">
+                        {element.name || element.type.toUpperCase()}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleLayoutChange('locked', !element.locked)}
+                          className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 cursor-pointer"
+                          title={element.locked ? 'Unlock' : 'Lock'}
+                        >
+                          {element.locked ? <Lock size={13} className="text-amber-500" /> : <Unlock size={13} />}
+                        </button>
+                        <button
+                          onClick={() => handleLayoutChange('hidden', !element.hidden)}
+                          className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 cursor-pointer"
+                          title={element.hidden ? 'Unhide' : 'Hide'}
+                        >
+                          {element.hidden ? <EyeOff size={13} className="text-red-500" /> : <Eye size={13} />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Name tag */}
+                    <div>
+                      <label className="text-xs font-medium text-zinc-500 block mb-1">Element Label</label>
+                      <input
+                        type="text"
+                        value={element.name || ''}
+                        onChange={(e) => handleLayoutChange('name', e.target.value)}
+                        className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none"
+                      />
+                    </div>
+
+                    {/* X & Y Coords */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs font-medium text-zinc-500 block mb-1">X Position</label>
+                        <input
+                          type="number"
+                          value={Math.round(element.x)}
+                          onChange={(e) => handleLayoutChange('x', Number(e.target.value))}
+                          className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-zinc-500 block mb-1">Y Position</label>
+                        <input
+                          type="number"
+                          value={Math.round(element.y)}
+                          onChange={(e) => handleLayoutChange('y', Number(e.target.value))}
+                          className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Width & Height */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs font-medium text-zinc-500 block mb-1">Width (px)</label>
+                        <input
+                          type="number"
+                          value={Math.round(element.width)}
+                          onChange={(e) => handleLayoutChange('width', Math.max(10, Number(e.target.value)))}
+                          className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-zinc-500 block mb-1">Height (px)</label>
+                        <input
+                          type="number"
+                          value={Math.round(element.height)}
+                          onChange={(e) => handleLayoutChange('height', Math.max(10, Number(e.target.value)))}
+                          className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Opacity */}
+                    <div>
+                      <div className="flex justify-between text-xs font-medium text-zinc-500 mb-1">
+                        <span>Opacity</span>
+                        <span>{Math.round(element.opacity * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={element.opacity}
+                        onChange={(e) => handleLayoutChange('opacity', Number(e.target.value))}
+                        className="w-full accent-blue-600"
+                      />
+                    </div>
+
+                    {/* Interactive Hotspot Link to Page */}
+                    <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800">
+                      <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5 mb-1.5">
+                        <Link size={13} className="text-blue-500" />
+                        Interactive Hotspot Link
+                      </label>
+                      <select
+                        value={element.linkToPageId || ''}
+                        onChange={(e) => handleLayoutChange('linkToPageId', e.target.value || undefined)}
+                        className="w-full bg-zinc-50 dark:bg-zinc-850 border border-zinc-200 dark:border-zinc-800 rounded-md px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200 outline-none cursor-pointer"
+                      >
+                        <option value="">None (Static element)</option>
+                        {project?.pages.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            Go to Page: {p.name}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-zinc-400 mt-1">
+                        Clicking this element in Preview Mode will navigate instantly to the linked page.
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
